@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
 import userService from "../services/UserService";
 import LoadingSpinner from "../components/LoadingSpinner";
 import Alert from "../components/Alert";
@@ -8,6 +9,7 @@ import UserRow from "../components/UserRow";
 import EmptyRow from "../components/EmptyRow";
 
 function Users() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -78,6 +80,7 @@ function Users() {
                 <UserRow
                   key={user.id}
                   user={user}
+                  currentUser={currentUser}
                   isDeleting={deleteConfirm === user.id}
                   onDeleteRequest={() => setDeleteConfirm(user.id)}
                   onDeleteConfirm={() => handleDelete(user.id)}
