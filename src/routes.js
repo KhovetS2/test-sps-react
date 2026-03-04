@@ -1,22 +1,40 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 
+import AuthLayout from "./layouts/AuthLayout";
+import SignIn from "./pages/SignIn";
 import Home from "./pages/Home";
 import Users from "./pages/Users";
-import UserEdit, { userLoader } from "./pages/UserEdit";
+import UserEdit from "./pages/UserEdit";
 
 const router = createBrowserRouter([
   {
-    path: "/",
-    element: <Home />,
+    path: "/signin",
+    element: <SignIn />,
   },
   {
-    path: "/users",
-    element: <Users />,
-  },
-  {
-    path: "/users/:userId",
-    element: <UserEdit />,
-    loader: userLoader,
+    element: <AuthLayout />,
+    children: [
+      {
+        path: "/",
+        element: <Home />,
+      },
+      {
+        path: "/home",
+        element: <Home />,
+      },
+      {
+        path: "/users",
+        element: <Users />,
+      },
+      {
+        path: "/users/:userId",
+        element: <UserEdit />,
+      },
+      {
+        path: "*",
+        element: <Navigate to="/" replace />,
+      },
+    ],
   },
 ]);
 
