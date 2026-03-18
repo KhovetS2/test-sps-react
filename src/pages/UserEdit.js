@@ -1,15 +1,21 @@
-import React, { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import userService from "../services/UserService";
 import LoadingSpinner from "../components/LoadingSpinner";
 import Alert from "../components/Alert";
 import PageHeader from "../components/PageHeader";
-import FormField from "../components/FormField";
+import Avatar from "../components/Avatar";
 
-function UserEdit() {
-  const { userId } = useParams();
+function EditUser() {
+  const params = useParams();
+  const id = params.userId;
+  const isCreateMode = id === "new";
   const navigate = useNavigate();
-  const isNew = userId === "new";
+
+  const [loading, setLoading] = useState(!isCreateMode);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   const [form, setForm] = useState({
     name: "",
@@ -17,174 +23,367 @@ function UserEdit() {
     type: "user",
     password: "",
   });
-  const [loading, setLoading] = useState(!isNew);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+
+  const [user, setUser] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [serverImageUrl, setServerImageUrl] = useState("");
 
   useEffect(() => {
-    if (!isNew) {
-      fetchUser();
+    if (isCreateMode) {
+      setLoading(false);
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
 
-  const fetchUser = async () => {
+    if (!id) {
+      setError("ID do usuário não encontrado na rota.");
+      setLoading(false);
+      return;
+    }
+
+    fetchUser();
+  }, [id, isCreateMode]);
+
+  useEffect(() => {
+    loadServerImage();
+
+    return () => {
+      if (serverImageUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(serverImageUrl);
+      }
+    };
+  }, [user?.id, user?.updated_at]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  async function loadServerImage() {
+    if (!user?.id || !user?.has_profile_image) {
+      if (serverImageUrl?.startsWith("blob:")) {
+        URL.revokeObjectURL(serverImageUrl);
+      }
+      setServerImageUrl("");
+      return;
+    }
+
+    try {
+      const objectUrl = await userService.getProfileImageObjectUrl(user);
+
+      setServerImageUrl((prev) => {
+        if (prev?.startsWith("blob:")) {
+          URL.revokeObjectURL(prev);
+        }
+        return objectUrl || "";
+      });
+    } catch (err) {
+      console.error("Erro ao carregar imagem autenticada =>", err);
+      setServerImageUrl((prev) => {
+        if (prev?.startsWith("blob:")) {
+          URL.revokeObjectURL(prev);
+        }
+        return "";
+      });
+    }
+  }
+
+  const currentImageSrc = useMemo(() => {
+    if (previewUrl) return previewUrl;
+    if (serverImageUrl) return serverImageUrl;
+    return null;
+  }, [previewUrl, serverImageUrl]);
+
+  async function fetchUser() {
     try {
       setLoading(true);
-      const user = await userService.get(userId);
+      setError("");
+
+      const response = await userService.get(id);
+      const userData = response?.user ?? response;
+
+      if (!userData) {
+        throw new Error("Usuário não encontrado no retorno da API.");
+      }
+
+      setUser(userData);
       setForm({
-        name: user.name || "",
-        email: user.email || "",
-        type: user.type || "user",
+        name: userData.name || "",
+        email: userData.email || "",
+        type: userData.type || "user",
         password: "",
       });
     } catch (err) {
+      console.error("fetchUser error =>", err);
       setError("Erro ao carregar usuário.");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
-  };
+  function handleChange(event) {
+    const { name, value } = event.target;
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  }
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError("");
-    setSuccess("");
-    setSaving(true);
+  function handleImageChange(event) {
+    const file = event.target.files?.[0] || null;
+    setSelectedImage(file);
+
+    setPreviewUrl((prev) => {
+      if (prev?.startsWith("blob:")) {
+        URL.revokeObjectURL(prev);
+      }
+      return file ? URL.createObjectURL(file) : "";
+    });
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
 
     try {
-      if (isNew) {
-        await userService.create(form);
-        setSuccess("Usuário criado com sucesso!");
-        setTimeout(() => navigate("/users"), 1500);
-      } else {
-        const data = { ...form };
-        if (!data.password) delete data.password;
-        await userService.update(userId, data);
-        setSuccess("Usuário atualizado com sucesso!");
+      setSaving(true);
+      setError("");
+      setSuccess("");
+
+      const payload = {
+        name: form.name,
+        email: form.email,
+        type: form.type,
+      };
+
+      if (form.password?.trim()) {
+        payload.password = form.password;
       }
+
+      let savedUser = null;
+
+      if (isCreateMode) {
+        if (!payload.password) {
+          setError("Senha é obrigatória na criação do usuário.");
+          setSaving(false);
+          return;
+        }
+
+        const createResponse = await userService.create(payload);
+        savedUser = createResponse?.user ?? createResponse;
+      } else {
+        const updateResponse = await userService.update(id, payload);
+        savedUser = updateResponse?.user ?? updateResponse;
+      }
+
+      if (!savedUser?.id) {
+        throw new Error("Usuário salvo, mas o ID não foi retornado.");
+      }
+
+      if (selectedImage) {
+        const uploadResponse = await userService.uploadProfileImage(
+          savedUser.id,
+          selectedImage,
+        );
+        savedUser = uploadResponse?.user ?? uploadResponse;
+      }
+
+      setUser(savedUser);
+      setSelectedImage(null);
+
+      setPreviewUrl((prev) => {
+        if (prev?.startsWith("blob:")) {
+          URL.revokeObjectURL(prev);
+        }
+        return "";
+      });
+
+      setForm((prev) => ({
+        ...prev,
+        password: "",
+      }));
+
+      navigate("/users", {
+        replace: true,
+        state: {
+          success: isCreateMode
+            ? "Usuário criado com sucesso."
+            : "Usuário atualizado com sucesso.",
+        },
+      });
     } catch (err) {
-      const message =
-        err.response?.data?.message || "Erro ao salvar usuário.";
-      setError(message);
+      console.error("save user error =>", err);
+      const apiMessage =
+        err?.response?.data?.message || "Erro ao salvar usuário.";
+      setError(apiMessage);
     } finally {
       setSaving(false);
     }
-  };
+  }
 
   if (loading) {
-    return <LoadingSpinner message="Carregando..." />;
+    return <LoadingSpinner message="Carregando usuário..." />;
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageHeader
-        title={isNew ? "Novo Usuário" : "Editar Usuário"}
-        subtitle={isNew ? "Preencha os dados para criar um novo usuário" : `Editando usuário #${userId}`}
-        backTo="/users"
+        title={isCreateMode ? "Criar Usuário" : "Editar Usuário"}
+        subtitle={
+          isCreateMode
+            ? "Cadastre um novo usuário"
+            : user
+              ? `Editando ${user.name}`
+              : "Editar usuário"
+        }
       />
 
-      <Alert variant="error" message={error} />
-      <Alert variant="success" message={success} />
+      <Alert variant="error" message={error} onClose={() => setError("")} />
+      <Alert
+        variant="success"
+        message={success}
+        onClose={() => setSuccess("")}
+      />
 
-      {/* Form */}
-      <div className="card">
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <FormField label="Nome" htmlFor="name">
-            <input
-              id="name"
-              name="name"
-              type="text"
-              value={form.name}
-              onChange={handleChange}
-              required
-              className="input-field"
-              placeholder="Nome do usuário"
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="card p-6 space-y-5">
+          <h2 className="text-lg font-semibold text-gray-900">
+            Foto de perfil
+          </h2>
+
+          <div className="flex justify-center">
+            <Avatar
+              name={form.name}
+              src={currentImageSrc}
+              size="lg"
+              className="w-24 h-24 text-2xl"
             />
-          </FormField>
-
-          <FormField label="E-mail" htmlFor="email">
-            <input
-              id="email"
-              name="email"
-              type="email"
-              value={form.email}
-              onChange={handleChange}
-              required
-              className="input-field"
-              placeholder="usuario@email.com"
-            />
-          </FormField>
-
-          <FormField label="Tipo" htmlFor="type">
-            <select
-              id="type"
-              name="type"
-              value={form.type}
-              onChange={handleChange}
-              className="input-field"
-            >
-              <option value="user">Usuário</option>
-              <option value="admin">Administrador</option>
-              <option value="manager">Gerente</option>
-            </select>
-          </FormField>
-
-          <FormField
-            label="Senha"
-            htmlFor="password"
-            hint={!isNew ? "(deixe vazio para manter)" : undefined}
-          >
-            <input
-              id="password"
-              name="password"
-              type="password"
-              value={form.password}
-              onChange={handleChange}
-              required={isNew}
-              className="input-field"
-              placeholder={isNew ? "Senha do usuário" : "••••••••"}
-            />
-          </FormField>
-
-          {/* Actions */}
-          <div className="flex items-center gap-3 pt-4 border-t border-gray-100">
-            <button
-              type="submit"
-              disabled={saving}
-              className="btn-primary flex items-center gap-2"
-            >
-              {saving ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Salvando...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  {isNew ? "Criar Usuário" : "Salvar Alterações"}
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/users")}
-              className="btn-ghost"
-            >
-              Cancelar
-            </button>
           </div>
-        </form>
+
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-gray-700">
+              Selecionar imagem
+            </label>
+
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleImageChange}
+              className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+            />
+          </div>
+
+          {selectedImage && (
+            <div className="rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-700">
+              <div>
+                <strong>Arquivo:</strong> {selectedImage.name}
+              </div>
+              <div>
+                <strong>Tamanho:</strong>{" "}
+                {(selectedImage.size / 1024).toFixed(2)} KB
+              </div>
+            </div>
+          )}
+
+          <p className="text-sm text-gray-500">
+            A foto será salva junto com o cadastro/edição do usuário.
+          </p>
+        </div>
+
+        <div className="card p-6 lg:col-span-2">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Nome
+              </label>
+              <input
+                type="text"
+                name="name"
+                value={form.name}
+                onChange={handleChange}
+                className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                E-mail
+              </label>
+              <input
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={handleChange}
+                className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Tipo
+              </label>
+              <select
+                name="type"
+                value={form.type}
+                onChange={handleChange}
+                className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+              >
+                <option value="user">user</option>
+                <option value="admin">admin</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {isCreateMode ? "Senha" : "Nova senha"}
+              </label>
+              <input
+                type="password"
+                name="password"
+                value={form.password}
+                onChange={handleChange}
+                className="block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                placeholder={
+                  isCreateMode
+                    ? "Digite a senha"
+                    : "Deixe em branco para manter a atual"
+                }
+                required={isCreateMode}
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                disabled={saving}
+                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving
+                  ? isCreateMode
+                    ? "Criando..."
+                    : "Salvando..."
+                  : isCreateMode
+                    ? "Criar usuário"
+                    : "Salvar alterações"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => navigate("/users")}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   );
 }
 
-export default UserEdit;
+export default EditUser;

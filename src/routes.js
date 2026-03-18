@@ -5,6 +5,7 @@ import SignIn from "./pages/SignIn";
 import Home from "./pages/Home";
 import Users from "./pages/Users";
 import UserEdit from "./pages/UserEdit";
+import Arquivos from "./pages/Arquivos";
 
 const router = createBrowserRouter([
   {
@@ -26,6 +27,11 @@ const router = createBrowserRouter([
         path: "/users",
         element: <Users />,
       },
+      {
+        path: "/arquivos",
+        element: <Arquivos />,
+      },
+
       {
         path: "/users/:userId",
         element: <UserEdit />,
